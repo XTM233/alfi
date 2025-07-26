@@ -36,7 +36,7 @@ class PDETrainer(VariationalTrainer):
         self.num_x_orig = tx[1].unique().shape[0]
         y_target = y_target[:, self.t_sorted]
 
-        # 2. Discretise time
+        # 2. Discretise time, create time interval of num_discretised points, evenly spaced with the dataset range
         if hasattr(dataset, 'num_discretised'):
             num_discretised = dataset.num_discretised
             self.disc = dataset.disc
@@ -45,7 +45,8 @@ class PDETrainer(VariationalTrainer):
         time = discretise(tx[0, :], num_discretised=num_discretised)
         time = torch.tensor(time)
 
-        # 3. Discretise space
+        # 3. Discretise space, create spatial grid of evenly spaced points from the dataset range, 
+        # number of points = range / (x[1] - x[0])
         spatial_grid = self.discretise_spatial(tx)
         spatial = torch.tensor(spatial_grid)
 

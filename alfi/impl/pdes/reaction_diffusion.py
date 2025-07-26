@@ -26,6 +26,37 @@ class ReactionDiffusion(torch_fenics.FEniCSModule):
         self.v = TestFunction(self.V)
 
     def interpolated_gradient(self, tx, y_matrix, disc=1, plot=False):
+        """
+        Computes the interpolated gradient and second-order derivatives of a given 
+        spatiotemporal matrix `y_matrix` using spline interpolation, 
+        which interpolates dy_t, d2y_x. A Reaction-Diffusion PDE function is constructed using dy_t, d2y_x.
+
+        Args:
+            tx (torch.Tensor): A 2D tensor where the first row represents time 
+                coordinates and the second row represents spatial coordinates.
+            y_matrix (torch.Tensor): A 2D tensor representing the spatiotemporal 
+                data with dimensions (num_t, num_x).
+            disc (int, optional): Discretization factor for downsampling the data. 
+                Defaults to 1 (no downsampling).
+            plot (bool, optional): If True, plots the spatiotemporal data and its 
+                computed derivatives. Defaults to False.
+
+        Returns:
+            tuple: A tuple containing:
+                - pde_func (function): A function representing the PDE, which takes 
+                  arguments (y, u, sensitivity, decay, diffusion) and computes the 
+                  time derivative of `y`.
+                - dy_t (torch.Tensor): The computed time derivative of `y_matrix` 
+                  after interpolation, reshaped to match the input dimensions.
+
+        Notes:
+            - The function uses `spline_interpolate_gradient` to compute the 
+              interpolated gradients and second-order derivatives.
+            - If `plot` is True, the function visualizes the original data, the 
+              computed time derivative (`dy_t`), and the second-order spatial 
+              derivative (`d2y_x`).
+        """
+
         num_t = tx[0, :].unique().shape[0]
         num_x = tx[1, :].unique().shape[0]
         num_t_orig = y_matrix.shape[-2]

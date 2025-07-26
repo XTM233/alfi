@@ -6,6 +6,19 @@ import numpy as np
 
 
 def interval_mesh(spatial):
+    """
+    Creates a 1D interval mesh based on the given spatial points.
+
+    Parameters:
+        spatial (list of float): A list of spatial coordinates defining the vertices of the interval mesh.
+
+    Returns:
+        dolfin.Mesh: A FEniCS Mesh object representing the 1D interval mesh.
+
+    Notes:
+        - The function uses `MeshEditor` to manually construct the mesh.
+        - Each point in the `spatial` list is converted into a vertex, and consecutive vertices are connected to form cells (intervals).
+    """
     domain_vertices = [Point(x) for x in spatial]
     editor = MeshEditor()
     mesh = Mesh()
