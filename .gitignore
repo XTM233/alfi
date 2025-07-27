@@ -23,3 +23,8 @@ ffc_element*
 
 pull.sh
 alfi/ndp_datasets.py
+
+experiment_results/*
+
+*.png
+*.pt
