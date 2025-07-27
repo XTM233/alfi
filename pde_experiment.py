@@ -39,8 +39,34 @@ from alfi.configuration import VariationalConfiguration
 plt.rcParams['font.family'] = 'DeJavu Serif'
 plt.rcParams['font.serif'] = ['Times New Roman']
 
+def evaluate_model(lfm, trainer):
+    tx = trainer.tx
+    disc = trainer.disc
+    h = lfm(tx, step=disc)
+    f_mean = h.mean.detach()
+    f_var = h.variance.detach()
+    y_target = trainer.y_target[0]
+    f_mean_test = f_mean.squeeze()
+    f_var_test = f_var.squeeze()
+
+    prot_q2 = q2(y_target, f_mean.squeeze()).item()
+    prot_cia = cia(y_target, f_mean_test, f_var_test).item()
+    prot_smse = smse(y_target, f_mean_test).mean().item()
+
+    f = lfm.gp_model(trainer.tx.t())
+    lf_target = trainer.lf_target
+    num_t = trainer.num_t
+    num_x = trainer.num_x
+    f_mean = f.mean.view(num_t, num_x)[::disc].reshape(-1)
+    f_var = f.variance.view(num_t, num_x)[::disc].reshape(-1)
+
+    mrna_q2 = q2(lf_target.squeeze(), f_mean.squeeze()).item()
+    mrna_cia = cia(lf_target.squeeze(), f_mean.squeeze(), f_var.squeeze()).item()
+    mrna_smse = smse(lf_target.squeeze() - f_mean.squeeze()).item()
+
+    return prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse
 # %%
-def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, learn_inducing_locations=False, gp_use_tril=True, params_grad=False, experiment_dir="experiments", note="", max_epoch=None):
+def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, learn_inducing_locations=False, gp_use_tril=True, params_grad=False, experiment_dir="experiment_results", note="", max_epoch=None):
     # Set random seed for reproducibility
     np.random.seed(SEED)
     torch.manual_seed(SEED)
@@ -54,6 +80,7 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     os.makedirs(experiment_dir + "/" + experiment_name, exist_ok=True)
     dataset = DrosophilaSpatialTranscriptomics(
         gene=gene, data_dir='./data', scale=True, disc=20) # data folder
+    print("Gene name:", gene)
     # :HP: params, matched with author's script
     if gene == 'kni':
         params = dict(lengthscale=10,
@@ -268,9 +295,10 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     if drosophila:
         lfm.eval()
         h = lfm(tx)
-        h_mean = h.mean.detach()[:512] # TODO
-        h_var = h.variance.detach()[:512]
         y_target = trainer.y_target[0]
+        num_data_points = y_target.shape[0]
+        h_mean = h.mean.detach()[:num_data_points] # TODO
+        h_var = h.variance.detach()[:num_data_points]
         print(y_target.shape)
         print(tx.shape)
 
@@ -379,32 +407,7 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     optimizer = [torch.optim.Adam(lfm.parameters(), lr=0.07)]
     trainer = PDETrainer(lfm, optimizer, dataset, track_parameters=list(lfm.fenics_named_parameters.keys()), lf_target=orig_data)
     lfm.eval()
-    trainer.plot_outputs = False
-    num_t = tx[0, :].unique().shape[0]
-    num_x = tx[1, :].unique().shape[0]
-    f_mean = lfm(tx).mean.detach()[:512]
-    f_var = lfm(tx).variance.detach()[:512]
-    y_target = trainer.y_target[0]
-    ts = tx[0, :].unique().sort()[0].numpy()
-    xs = tx[1, :].unique().sort()[0].numpy()
-    t_diff = ts[-1] - ts[0]
-    x_diff = xs[-1] - xs[0]
-    extent = [ts[0], ts[-1], xs[0], xs[-1]]
-    f_mean_test = f_mean.squeeze()
-    f_var_test = f_var.squeeze()
-
-    prot_q2 = q2(y_target, f_mean.squeeze()).item()
-    prot_cia = cia(y_target, f_mean_test, f_var_test).item()
-    prot_smse = smse(y_target, f_mean_test).mean().item()
-
-    gp = gp_model(tx.t())
-    lf_target = orig_data[trainer.t_sorted, 2]
-    f_mean = gp.mean.detach().view(num_t, num_x)[::disc].reshape(-1)
-    f_var = gp.variance.detach().view(num_t, num_x)[::disc].reshape(-1)
-
-    mrna_q2 = q2(lf_target.squeeze(), f_mean.squeeze()).item()
-    mrna_cia = cia(lf_target.squeeze(), f_mean.squeeze(), f_var.squeeze()).item()
-    mrna_smse = smse(lf_target.squeeze(), f_mean.squeeze()).mean().item()
+    prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse = evaluate_model(lfm, trainer)
     result_dict = {
         'prot_q2': prot_q2,
         'prot_cia': prot_cia,
