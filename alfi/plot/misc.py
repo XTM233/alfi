@@ -7,7 +7,7 @@ import pandas as pd
 from seaborn import kdeplot
 from .colours import Colours
 
-plt.style.use('seaborn')
+plt.style.use('seaborn-v0_8')
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams['font.serif'] = 'CMU Serif'
 sns.set(style='white', font="CMU Serif")

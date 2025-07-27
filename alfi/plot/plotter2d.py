@@ -10,7 +10,7 @@ from .colours import Colours
 from alfi.utilities import is_cuda
 
 
-plt.style.use('seaborn')
+plt.style.use('seaborn-v0_8')
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams['font.serif'] = 'CMU Serif'
 sns.set(style='white', font="CMU Serif")
