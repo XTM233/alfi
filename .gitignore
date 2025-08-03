@@ -28,3 +28,6 @@ experiment_results/*
 
 *.png
 *.pt
+*.csv
+*~
+*.un~
