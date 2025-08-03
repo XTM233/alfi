@@ -54,15 +54,15 @@ def evaluate_model(lfm, trainer):
     prot_smse = smse(y_target, f_mean_test).mean().item()
 
     f = lfm.gp_model(trainer.tx.t())
-    lf_target = trainer.lf_target
+    lf_target = trainer.lf_target.squeeze()
     num_t = trainer.num_t
     num_x = trainer.num_x
     f_mean = f.mean.view(num_t, num_x)[::disc].reshape(-1)
     f_var = f.variance.view(num_t, num_x)[::disc].reshape(-1)
 
-    mrna_q2 = q2(lf_target.squeeze(), f_mean.squeeze()).item()
-    mrna_cia = cia(lf_target.squeeze(), f_mean.squeeze(), f_var.squeeze()).item()
-    mrna_smse = smse(lf_target.squeeze() - f_mean.squeeze()).item()
+    mrna_q2 = q2(lf_target, f_mean.squeeze()).item()
+    mrna_cia = cia(lf_target, f_mean.squeeze(), f_var.squeeze()).item()
+    mrna_smse = smse(lf_target, f_mean.squeeze()).mean().item()
 
     return prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse
 # %%
@@ -294,27 +294,13 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
         plt.plot(loss_traj)
     if drosophila:
         lfm.eval()
-        h = lfm(tx)
-        y_target = trainer.y_target[0]
-        num_data_points = y_target.shape[0]
-        h_mean = h.mean.detach()[:num_data_points] # TODO
-        h_var = h.variance.detach()[:num_data_points]
-        print(y_target.shape)
-        print(tx.shape)
-
-        print(h_mean.shape, y_target.shape, h_var.shape)
-        print('prot Q2', q2(y_target.squeeze(), h_mean.squeeze()).item())
-        print('prot CA', cia(y_target.squeeze(), h_mean.squeeze(), h_var.squeeze()).item())
-        gp = lfm.gp_model(tx.t())
-        lf_target = orig_data[trainer.t_sorted, 2]
-        f_mean = gp.mean.detach().view(num_t, num_x)[::disc].reshape(-1)
-        f_var = gp.variance.detach().view(num_t, num_x)[::disc].reshape(-1)
-
-        print('mrna Q2', q2(lf_target.squeeze(), f_mean.squeeze()).item())
-        print('mrna CA', cia(lf_target.squeeze(), f_mean.squeeze(), f_var.squeeze()).item())
+        prot_q2, prot_cia, _, mrna_q2, mrna_cia, _ = evaluate_model(lfm, trainer)
+        print('prot Q2', prot_q2)
+        print('prot CA', prot_cia)
+        print('mrna Q2', mrna_q2)
+        print('mrna CA', mrna_cia)
 
     # Train LFM
-
     # repeat untinl convergence
     print(f'Training LFM for {num_epochs} epochs')
 
