@@ -66,7 +66,7 @@ def evaluate_model(lfm, trainer):
 
     return prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse
 # %%
-def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, learn_inducing_locations=False, gp_use_tril=True, params_grad=False, experiment_dir="experiment_results", note="", max_epoch=None):
+def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, learn_inducing_locations=False, gp_use_tril=True, params_grad=False, experiment_dir="experiment_results", note="", max_epoch=None, debug=False):
     # Set random seed for reproducibility
     np.random.seed(SEED)
     torch.manual_seed(SEED)
@@ -114,6 +114,8 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
         params["diffusion"] = 0.01
     if max_epoch > 0:
         num_epochs = max_epoch
+
+
     disc = dataset.disc
 
     data = next(iter(dataset))
@@ -252,6 +254,10 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     else:
         optimizers = [Adam(lfm.parameters(), lr=0.05)]
 
+    if debug and gene == 'kr' and params['natural']:
+        print('Debug mode enabled, using smaller learning rate')
+        optimizers = [Adam(lfm.parameters(), lr=0.015)]
+
     pre_estimator = PartialPreEstimator(
         lfm, optimizers, dataset, pde_func,
         input_pair=(trainer.tx, trainer.y_target), target=pde_target,
@@ -261,7 +267,10 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     lfm.set_mode(TrainMode.GRADIENT_MATCH)
     lfm.config.num_samples = 50
     if not skip:
-        times = pre_estimator.train(80, report_interval=10) # [(timestamp, loss) x 60]
+        if debug:
+            times = pre_estimator.train(60, report_interval=5)  # [(timestamp, loss) x 60]
+        else:
+            times = pre_estimator.train(80, report_interval=10) # [(timestamp, loss) x 60]
     lfm.config.num_samples = 5
 
     tx_orig = orig_data[:, :2].t()
@@ -419,6 +428,7 @@ if __name__ == "__main__":
     parser.add_argument("--experiment_dir", type=str, default="experiment_results", help="Directory to save experiment results.")
     parser.add_argument("--note", type=str, default="", help="Additional note for experiment naming.")
     parser.add_argument("--max_epoch", type=int, default=0, help="Maximum number of training epochs.")
+    parser.add_argument("--debug", type=bool, default=False, help="Enable debug mode for smaller learning rates.")
 
     args = parser.parse_args()
 
@@ -434,5 +444,6 @@ if __name__ == "__main__":
         params_grad=args.params_grad,
         experiment_dir=args.experiment_dir,
         note=args.note,
-        max_epoch=args.max_epoch
+        max_epoch=args.max_epoch,
+        debug=args.debug
     )
