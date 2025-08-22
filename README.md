@@ -1,3 +1,6 @@
+Experiment code for COMP64804 Research Project 20025. Code cleanup is in progress.
+
+---
 # Alfi: Approximate Latent Force Inference
 
 > _Don't miss out!_
@@ -26,6 +29,7 @@ We support analytical (exact) inference in addition to inducing point approximat
 
 
 See Jupyter notebooks in the documentation [here](https://alfi.readthedocs.io/en/latest/notebooks_list.html). Alternatively, directly browse the notebooks in the `docs/notebooks/` directory. The docs contain linear, non-linear (both variational and MCMC methods), and partial Latent Force Models. The notebooks also contain complete examples from the literature such as a replication of the analytical linear Latent Force Model from [Lawrence et al., 2006](https://papers.nips.cc/paper/3119-modelling-transcriptional-regulation-using-gaussian-processes.pdf)
+
 
 
 
