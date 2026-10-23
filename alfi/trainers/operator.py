@@ -9,7 +9,7 @@ from torch.nn.functional import mse_loss, softplus
 
 from alfi.nn import LpLoss
 from alfi.utilities.torch import is_cuda
-from alfi.models import NeuralOperator
+# from alfi.models import NeuralOperator
 from alfi.trainers import Trainer
 
 

@@ -4,20 +4,20 @@ from .variational_lfm import VariationalLFM, TrainMode
 from .ordinary_lfm import OrdinaryLFM
 from .ordinary_lfm_no_precompute import OrdinaryLFMNoPrecompute
 from .approximate_gp import MultiOutputGP, generate_multioutput_gp
-from .operator import NeuralOperator
-from .recurrent_operator import RecurrentNeuralOperator
-from .neural_lfm import NeuralLFM
+# from .operator import NeuralOperator
+# from .recurrent_operator import RecurrentNeuralOperator
+# from .neural_lfm import NeuralLFM
 
 
 modules = [
     'LFM',
-    'NeuralLFM',
+    # 'NeuralLFM',
     'ExactLFM',
     'VariationalLFM',
     'OrdinaryLFM',
     'OrdinaryLFMNoPrecompute',
-    'NeuralOperator',
-    'RecurrentNeuralOperator',
+    # 'NeuralOperator',
+    # 'RecurrentNeuralOperator',
     'MultiOutputGP',
     'generate_multioutput_gp',
     'TrainMode',

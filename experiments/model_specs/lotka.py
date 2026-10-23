@@ -17,7 +17,7 @@ from alfi.impl.odes import LotkaVolterra, LotkaVolterraState
 
 tight_kwargs = dict(bbox_inches='tight', pad_inches=0)
 
-plt.style.use('seaborn-white')
+plt.style.use('seaborn-v0_8-white')
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams['font.serif'] = 'CMU Serif'
 sns.set(style='white', font="CMU Serif")

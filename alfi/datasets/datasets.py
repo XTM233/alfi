@@ -211,21 +211,37 @@ class DrosophilaSpatialTranscriptomics(LFMDataset):
     Reverse engineering post-transcriptional regulation of
     gap genes in Drosophila melanogaster
     """
-    def __init__(self, gene='kr', data_dir='../data/', scale=False, scale_tx=False, nn_format=False, disc=1):
+    def __init__(self, gene='kr', data_dir='../data/', scale=False, scale_tx=False, nn_format=False, disc=1, log=False):
         indents = {'kr': 64, 'kni': 56, 'gt': 60}
         assert gene in indents
         data = pd.read_csv(path.join(data_dir, f'clean_{gene}.csv'))
         data = data.iloc[indents[gene]:].values
         data = data[:, [0, 1, 3, 2]]
-        if scale:
+        self.scaler = None
+        if scale == "minmax":
+            scaler = MinMaxScaler()
+            data[:, 2:3] = scaler.fit_transform(data[:, 2:3])
+            data[:, 3:4] = scaler.transform(data[:, 3:4])
+            self.scaler = scaler
+
+        elif scale and not log:
             scaler = StandardScaler()
             data[:, 2:3] = scaler.fit_transform(data[:, 2:3])
             data[:, 3:4] = scaler.transform(data[:, 3:4])
+            self.scaler = scaler
         if scale_tx:
             scaler = MinMaxScaler()
             data[:, 0:1] = scaler.fit_transform(data[:, 0:1])
             data[:, 1:2] = scaler.fit_transform(data[:, 1:2])
-
+            self.tx_scaler = scaler
+        
+        if log:
+            data[:, 2:3] = np.log(data[:, 2:3] + 1e-6)
+            if scale:
+                scaler = StandardScaler()
+                data[:, 2:3] = scaler.fit_transform(data[:, 2:3])
+                data[:, 3:4] = scaler.transform(data[:, 3:4])
+                self.scaler = scaler
         self.orig_data = torch.tensor(data).t()
         self.num_outputs = 1
         self.disc = disc

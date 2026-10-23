@@ -69,12 +69,12 @@ def ceil(x):
     return int(math.ceil(x))
 
 
-def softplus(value):
-    return torch.log(1 + torch.exp(value))
+def softplus(value, beta=1):
+    return torch.log(1 + torch.exp(beta * value)) / beta
 
 
-def inv_softplus(value):
-    return torch.log(torch.exp(value) - 1)
+def inv_softplus(value, beta=1):
+    return torch.log(torch.exp(beta * value) - 1) / beta
 
 
 def cholesky_inverse(cholesky_factor, upper=False):

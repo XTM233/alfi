@@ -124,9 +124,9 @@ class PDETrainer(VariationalTrainer):
             f_mean = gp.mean.view(num_t, num_x)[::self.disc].reshape(-1)
             f_var = gp.variance.view(num_t, num_x)[::self.disc].reshape(-1)
 
-            mrna_q2 = q2(lf_target.squeeze(), f_mean.squeeze())
-            mrna_cia = cia(lf_target.squeeze(), f_mean.squeeze(), f_var.squeeze())
-            mrna_mse = torch.mean(torch.square(lf_target.squeeze() - f_mean.squeeze()))
+            mrna_q2 = q2(lf_target.squeeze(), self.model.G(f_mean.squeeze()))
+            mrna_cia = cia(lf_target.squeeze(), self.model.G(f_mean.squeeze()), f_var.squeeze())
+            mrna_mse = torch.mean(torch.square(lf_target.squeeze() - self.model.G(f_mean.squeeze())))
 
             if (mrna_q2 + prot_q2) > (self.mrna_q2_best + self.prot_q2_best):
                 self.mrna_q2_best = mrna_q2

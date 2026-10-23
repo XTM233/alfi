@@ -1,5 +1,6 @@
 
 __pycache__/
+**/.ipynb_checkpoints/
 
 dist
 build
@@ -26,8 +27,12 @@ alfi/ndp_datasets.py
 
 experiment_results/*
 
+# output pictures, models, results and other binaries
 *.png
 *.pt
 *.csv
+*.pdf
+
+# vim buffers
 *~
 *.un~

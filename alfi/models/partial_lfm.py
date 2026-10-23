@@ -1,5 +1,6 @@
 import torch
 from typing import Callable
+import time
 
 from gpytorch.models import ApproximateGP
 from gpytorch.distributions import MultivariateNormal, MultitaskMultivariateNormal
@@ -25,6 +26,7 @@ class PartialLFM(VariationalLFM):
         self.fenics_model = fenics_model
         self.fenics_parameters = fenics_parameters
         self.fenics_named_parameters = dict()
+        self.sampling_time = 0
         name = 0
         for parameter in self.fenics_parameters:
             self.register_parameter(name='fenics' + str(name), param=parameter)
@@ -51,11 +53,13 @@ class PartialLFM(VariationalLFM):
         else:
             t_f = tx.transpose(0, 1)
             data = tx
+            start_time = time.time()
         num_t = data[0, :].unique().shape[0]
         num_x = data[1, :].unique().shape[0]
 
         q_u = self.gp_model(t_f)
         u = q_u.rsample(torch.Size([self.config.num_samples])).permute(0, 2, 1)
+        assert torch.any(torch.isnan(u)) == False, "GP samples contain NaN values."
         u = self.G(u)  # (S, num_outputs, tx)
         u = u.view(*u.shape[:2], num_t, num_x)
         if self.train_mode == TrainMode.GRADIENT_MATCH:
@@ -69,9 +73,25 @@ class PartialLFM(VariationalLFM):
 
         f_mean = outputs.mean(dim=0).view(1, -1)  # shape (batch, times * distance)
         f_var = outputs.var(dim=0).view(1, -1) + 1e-7
+        # ensure variance is strictly positive, prevent non-PSD error
+
+        # else:
+        #     print("Variance is positive, no clamping needed.")
         # TODO: make distribution something less constraining
+        assert torch.any(torch.isnan(f_mean)) == False, "Mean contains NaN values."
+        assert torch.any(torch.isnan(f_var)) == False, "Variance contains NaN values."
+        # if torch.any(f_var <= 1e-6):
+        #     print("Warning: Variance is non-positive, clamping to a small positive value.")
+        #     f_var = torch.clamp(f_var, min=1e-5)
+        # print("f_mean  shape", f_mean.shape)
+        # print("f_var shape", f_var.shape)
         f_covar = torch.diag_embed(f_var)
+        # print("f_covar shape", f_covar.shape)
+        # print(f_covar[0, :10, :10])
+
         batch_mvn = MultivariateNormal(f_mean, f_covar)
+        if self.train_mode != TrainMode.GRADIENT_MATCH:
+            self.sampling_time += time.time() - start_time
         return MultitaskMultivariateNormal.from_batch_mvn(batch_mvn, task_dim=0)
 
     def func(self, i, u, step):

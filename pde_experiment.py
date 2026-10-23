@@ -14,6 +14,7 @@ import random
 import os
 import json
 import argparse
+import time
 
 from torch.nn import Parameter
 from matplotlib import pyplot as plt
@@ -35,38 +36,123 @@ from alfi.plot import plot_spatiotemporal_data, Plotter1d
 from alfi.utilities.torch import softplus, inv_softplus, q2, cia, smse
 from alfi.configuration import VariationalConfiguration
 
-# %%
 plt.rcParams['font.family'] = 'DeJavu Serif'
 plt.rcParams['font.serif'] = ['Times New Roman']
 
-def evaluate_model(lfm, trainer):
+def load_model(experiment_dir, existing_model, gp_kwargs, inducing_points, lengthscale, zero_mean, lfm_args, lfm_cls, num_epochs=500):
+    # NOTE change num_epochs to be matched alternatively
+    filepath = str(num_epochs) +"epochs_trained_"   # Specify the file path to save the model
+    experiment_name = existing_model
+    gp_args = [1, inducing_points]
+    gp_model = generate_multioutput_gp(
+        *gp_args,
+        initial_lengthscale=lengthscale,
+        ard_dims=2,
+        zero_mean=zero_mean,
+        gp_kwargs=gp_kwargs)
+    gp_args = [gp_model.mean_module, gp_model.covar_module] + [gp_args[1], gp_args[0]]
+    lfm = lfm_cls.load(experiment_dir+"/"+ experiment_name + "/" + filepath,
+                        gp_cls=MultiOutputGP,
+                        gp_args=gp_args,
+                        gp_kwargs=gp_kwargs,
+                        lfm_args=lfm_args)
+    # lfm = PartialLFM(1, gp_model, fenics_model, fenics_params, config)
+
+    gp_model = lfm.gp_model
+
+    return lfm, gp_model, num_epochs
+
+def evaluate_model(lfm, trainer, plot=False, scaler=None, path="", inv_G=None):
     tx = trainer.tx
     disc = trainer.disc
     h = lfm(tx, step=disc)
-    f_mean = h.mean.detach()
-    f_var = h.variance.detach()
-    y_target = trainer.y_target[0]
-    f_mean_test = f_mean.squeeze()
-    f_var_test = f_var.squeeze()
+    h_mean_unscaled = h.mean.detach()
+    h_var_unscaled = h.variance.detach()
+    y_target_unscaled = trainer.y_target[0]
+    if scaler is not None:
+        h_mean = torch.tensor(scaler.inverse_transform(h_mean_unscaled.detach().numpy().reshape(-1, 1))).view(-1)
+        y_target = torch.tensor(scaler.inverse_transform(y_target_unscaled.detach().numpy().reshape(-1, 1))).view(-1)
+        prot_q2 = q2(y_target, h_mean.squeeze()).item()
+        prot_smse = smse(y_target, h_mean.squeeze()).mean().item()
+    else:
+        prot_q2 = q2(y_target_unscaled.squeeze(), h_mean_unscaled.squeeze()).item()
+        prot_smse = smse(y_target_unscaled.squeeze(), h_mean_unscaled.squeeze()).mean().item()
 
-    prot_q2 = q2(y_target, f_mean.squeeze()).item()
-    prot_cia = cia(y_target, f_mean_test, f_var_test).item()
-    prot_smse = smse(y_target, f_mean_test).mean().item()
+    prot_cia = cia(y_target_unscaled, h_mean_unscaled.squeeze(), h_var_unscaled.squeeze()).item()
+
+    if plot:
+        if not scaler:
+            h_mean = h_mean_unscaled
+            y_target = y_target_unscaled
+        tx = trainer.tx
+        num_t = 8
+        num_x = h_mean.shape[0] // num_t
+
+        ts = tx[0, :].unique().sort()[0].numpy()
+        xs = tx[1, :].unique().sort()[0].numpy()
+        extent = [ts[0], ts[-1], xs[0], xs[-1]]
+        y_min = min(h_mean.min(), y_target.min())
+        y_max = max(h_mean.max(), y_target.max())
+        print(f"y_min: {y_min}, y_max: {y_max}")
+        prot_axes = plot_spatiotemporal_data(
+            [h_mean.detach().view(num_t, num_x).t(),
+             y_target.detach().view(num_t, num_x).t()
+             ],
+            extent,
+            titles=['Prediction', "Ground Truth"],
+            clim=[(y_min, y_max),(y_min, y_max)],
+        )
 
     f = lfm.gp_model(trainer.tx.t())
-    lf_target = trainer.lf_target.squeeze()
+    lf_target_unscaled = trainer.lf_target.squeeze()
     num_t = trainer.num_t
     num_x = trainer.num_x
-    f_mean = f.mean.view(num_t, num_x)[::disc].reshape(-1)
-    f_var = f.variance.view(num_t, num_x)[::disc].reshape(-1)
+    f_mean_unscaled = f.mean.reshape(num_t, num_x)[::disc].reshape(-1)
+    f_var_unscaled = f.variance.reshape(num_t, num_x)[::disc].reshape(-1)
+    f_mean_unscaled = lfm.G(f_mean_unscaled)
+    if scaler is not None:
+        f_mean = torch.tensor(scaler.inverse_transform(f_mean_unscaled.detach().numpy().reshape(-1, 1))).view(-1)
+        lf_target = torch.tensor(scaler.inverse_transform(lf_target_unscaled.detach().numpy().reshape(-1, 1))).view(-1)
+        mrna_q2 = q2(lf_target, f_mean.squeeze()).item()
+        mrna_smse = smse(lf_target, f_mean.squeeze()).mean().item()
+        if inv_G:
+            lf_target_inv = inv_G(lf_target_unscaled)
+            f_mean_inv = inv_G(f_mean)
+            mrna_cia = cia(lf_target_inv, f_mean_inv.squeeze(), f_var_unscaled.squeeze()).item()
+    else:
+        mrna_q2 = q2(lf_target_unscaled.squeeze(), f_mean_unscaled.squeeze()).item()
+        mrna_smse = smse(lf_target_unscaled.squeeze(), f_mean_unscaled.squeeze()).mean().item()
+    mrna_cia = cia(lf_target_unscaled, f_mean_unscaled.squeeze(), f_var_unscaled.squeeze()).item()
 
-    mrna_q2 = q2(lf_target, f_mean.squeeze()).item()
-    mrna_cia = cia(lf_target, f_mean.squeeze(), f_var.squeeze()).item()
-    mrna_smse = smse(lf_target, f_mean.squeeze()).mean().item()
 
-    return prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse
-# %%
-def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, learn_inducing_locations=False, gp_use_tril=True, params_grad=False, experiment_dir="experiment_results", note="", max_epoch=None, debug=False):
+    if plot:
+        if not scaler:
+            f_mean = f_mean_unscaled
+            lf_target = lf_target_unscaled
+        tx = trainer.tx
+        num_t = 8
+        num_x = f_mean.shape[0] // num_t
+
+        ts = tx[0, :].unique().sort()[0].numpy()
+        xs = tx[1, :].unique().sort()[0].numpy()
+        extent = [ts[0], ts[-1], xs[0], xs[-1]]
+        y_min = min(f_mean.min(), lf_target.min())
+        y_max = max(f_mean.max(), lf_target.max())
+        print(f"y_min: {y_min}, y_max: {y_max}")
+        mrna_axes = plot_spatiotemporal_data(
+            [f_mean.detach().view(num_t, num_x).t(),
+             lf_target.detach().view(num_t, num_x).t()
+             ],
+            extent,
+            titles=['Prediction', "Ground Truth"],
+            clim=[(y_min, y_max),(y_min, y_max)],
+        )
+    if plot:
+        return prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse, prot_axes, mrna_axes
+    else:
+        return prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse
+
+def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, learn_inducing_locations=False, gp_use_tril=True, params_grad=False, experiment_dir="experiment_results", note="", max_epoch=None, debug=False, transformation=None,lr=0.005, existing_model=None):
     # Set random seed for reproducibility
     np.random.seed(SEED)
     torch.manual_seed(SEED)
@@ -75,20 +161,28 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     random.seed(SEED)
 
     # Load data and configuration
-    from time import time
-    experiment_name = f"{gene}_{SEED}_{str(time())}{note}"
+    import time
+    if existing_model:
+        experiment_name = existing_model
+    else:
+        experiment_name = f"{gene}_{SEED}_{str(time.time())}{note}"
     os.makedirs(experiment_dir + "/" + experiment_name, exist_ok=True)
-    dataset = DrosophilaSpatialTranscriptomics(
-        gene=gene, data_dir='./data', scale=True, disc=20) # data folder
+    if not transformation or transformation == "":
+        dataset = DrosophilaSpatialTranscriptomics(
+            gene=gene, data_dir='./data', scale=True, disc=20) # data folder
+    else:
+        dataset = DrosophilaSpatialTranscriptomics(
+                gene=gene, data_dir='./data', scale="minmax",disc=20)
     print("Gene name:", gene)
     # :HP: params, matched with author's script
     if gene == 'kni':
         params = dict(lengthscale=10,
                 **dros_ground_truth(gene),
                 parameter_grad=False,
-                warm_epochs=-1,
+                # warm_epochs=-1, # Tuned
                 natural=False,
-                clamp=True)
+                clamp=True,
+                lr=0.015)
         num_epochs = 300
     elif gene == 'gt':
         params = dict(lengthscale=10,
@@ -105,8 +199,21 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
                 parameter_grad=False,
                 warm_epochs=-1,
                 natural=True,
-                zero_mean=True,
+                zero_mean=False, # tuned
                 clamp=True)
+        if transformation == "softplus":
+            beta = 1
+        elif isinstance(transformation, str) and transformation.startswith("softplus"):
+            params = dict(lengthscale=10,
+                    **dros_ground_truth(gene),
+                    parameter_grad=False,
+                    warm_epochs=-1,
+                    natural=True,
+                    # zero_mean=True, # tuned
+                    clamp=True,
+                    lr=lr)
+            beta = transformation.split("_")[1]
+            beta = float(beta)
     if params_grad:
         params['parameter_grad'] = True
         params["sensitivity"] = 0.1
@@ -122,7 +229,18 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     tx, y_target = data
     lengthscale = params['lengthscale']
     zero_mean = params['zero_mean'] if 'zero_mean' in params else False
+    trainer_lr = params['lr'] if 'lr' in params else 0.005
 
+    if transformation ==  "softplus":
+        # change later
+        class  CustomPartialLFM(PartialLFM):
+            def G(self, u):
+                return softplus(u, beta=beta)
+        inv_G = lambda u: inv_softplus(u, beta=beta) 
+    else:
+        class CustomPartialLFM(PartialLFM):
+            pass
+        inv_G = None
     # #### Generate FENiCS 1D mesh from the data
     # Alternatively, if our spatial data is not uniformly spaced, we can define a custom mesh as follows.
     # We calculate a mesh that contains all possible spatial locations in the dataset
@@ -187,26 +305,29 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     parameter_grad = params['parameter_grad'] if 'parameter_grad' in params else True
     sensitivity = Parameter(
         inv_softplus(torch.tensor(params['sensitivity'])) * torch.ones((1, 1), dtype=torch.float64),
-        requires_grad=False)
+        requires_grad=parameter_grad)
     decay = Parameter(
         inv_softplus(torch.tensor(params['decay'])) * torch.ones((1, 1), dtype=torch.float64),
-        requires_grad=parameter_grad)
+            requires_grad=parameter_grad)
     diffusion = Parameter(
         inv_softplus(torch.tensor(params['diffusion'])) * torch.ones((1, 1), dtype=torch.float64),
         requires_grad=parameter_grad)
 
     fenics_params = [sensitivity, decay, diffusion]
     num_training = int(train_ratio * tx.shape[1])
-
-    lfm = PartialLFM(1, gp_model, fenics_model, fenics_params, config, num_training_points=num_training)
+    if existing_model:
+        lfm_args = [1, fenics_model, fenics_params, config]
+        lfm, gp_model, existing_epoch = load_model(experiment_dir, existing_model, gp_kwargs, inducing_points, lengthscale, zero_mean, lfm_args, lfm_cls=CustomPartialLFM)
+    else:
+        lfm = CustomPartialLFM(1, gp_model, fenics_model, fenics_params, config, num_training_points=num_training)
 
     # :HP: learning rate for each optimizer, matched with author's script
     if params['natural']:
-        variational_optimizer = NGD(lfm.variational_parameters(), num_data=num_training, lr=0.03)
-        parameter_optimizer = Adam(lfm.nonvariational_parameters(), lr=0.03)
+        variational_optimizer = NGD(lfm.variational_parameters(), num_data=num_training, lr=trainer_lr)
+        parameter_optimizer = Adam(lfm.nonvariational_parameters(), lr=trainer_lr)
         optimizers = [variational_optimizer, parameter_optimizer]
     else:
-        optimizers = [Adam(lfm.parameters(), lr=0.005)]
+        optimizers = [Adam(lfm.parameters(), lr=trainer_lr)]
 
     track_parameters = list(lfm.fenics_named_parameters.keys()) +\
                     list(map(lambda s: f'gp_model.{s}', dict(lfm.gp_model.named_hyperparameters()).keys()))
@@ -254,9 +375,8 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     else:
         optimizers = [Adam(lfm.parameters(), lr=0.05)]
 
-    if debug and gene == 'kr' and params['natural']:
-        print('Debug mode enabled, using smaller learning rate')
-        optimizers = [Adam(lfm.parameters(), lr=0.015)]
+    if existing_model:
+        return lfm, gp_model, trainer
 
     pre_estimator = PartialPreEstimator(
         lfm, optimizers, dataset, pde_func,
@@ -268,10 +388,11 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     lfm.config.num_samples = 50
     if not skip:
         if debug:
-            times = pre_estimator.train(60, report_interval=5)  # [(timestamp, loss) x 60]
+            times = pre_estimator.train(5)  # [(timestamp, loss) x 60]
         else:
             times = pre_estimator.train(80, report_interval=10) # [(timestamp, loss) x 60]
-    lfm.config.num_samples = 5
+    # TODO may tune later
+    lfm.config.num_samples = 10
 
     tx_orig = orig_data[:, :2].t()
 
@@ -303,7 +424,7 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
         plt.plot(loss_traj)
     if drosophila:
         lfm.eval()
-        prot_q2, prot_cia, _, mrna_q2, mrna_cia, _ = evaluate_model(lfm, trainer)
+        prot_q2, prot_cia, _, mrna_q2, mrna_cia, _ = evaluate_model(lfm, trainer, inv_G=inv_G, scaler=dataset.scaler)
         print('prot Q2', prot_q2)
         print('prot CA', prot_cia)
         print('mrna Q2', mrna_q2)
@@ -312,14 +433,27 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     # Train LFM
     # repeat untinl convergence
     print(f'Training LFM for {num_epochs} epochs')
-
-    times = trainer.train(num_epochs)
-
+    training_start_time = time.time()
+    if debug:
+        times = trainer.train(5)
+    else:
+        times = trainer.train(num_epochs)
+    training_time = time.time() - training_start_time
+    if not debug:
+        early_res = {
+            'prot_q2': trainer.prot_q2_best.item(),
+            'prot_cia': trainer.cia[1].item(),
+            'mrna_q2': trainer.mrna_q2_best.item(),
+            'mrna_cia': trainer.cia[0].item(),
+            "sampling_time": lfm.sampling_time,
+            "total_training_time": training_time,
+            }
+        with open(experiment_dir + "/" + experiment_name + "/early_res.json", "w") as f:
+            json.dump(early_res, f, indent=4)
     # %%
     time = np.array([tup[0] for tup in times])
     loss_traj = np.array([tup[1][0] for tup in times])
-    plt.savefig(experiment_dir+"/"+ experiment_name + "/prot.pdf", dpi=300, bbox_inches='tight')
-
+    plt.savefig(experiment_dir+"/"+ experiment_name + "/prot_unscaled.pdf", dpi=300, bbox_inches='tight')
     fig, ax1 = plt.subplots()
 
     ax1.set_xlabel('Time')
@@ -391,7 +525,7 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
         gp_kwargs=gp_kwargs)
     gp_args = [gp_model.mean_module, gp_model.covar_module] + [gp_args[1], gp_args[0]]
 
-    lfm = PartialLFM.load(experiment_dir+"/"+ experiment_name + "/" + filepath,
+    lfm = CustomPartialLFM.load(experiment_dir+"/"+ experiment_name + "/" + filepath,
                         gp_cls=MultiOutputGP,
                         gp_args=gp_args,
                         gp_kwargs=gp_kwargs,
@@ -402,7 +536,13 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     optimizer = [torch.optim.Adam(lfm.parameters(), lr=0.07)]
     trainer = PDETrainer(lfm, optimizer, dataset, track_parameters=list(lfm.fenics_named_parameters.keys()), lf_target=orig_data)
     lfm.eval()
-    prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse = evaluate_model(lfm, trainer)
+    prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse, prot_axes, mrna_axes = evaluate_model(lfm, trainer, plot=True, scaler=dataset.scaler, path=f"{experiment_dir}/{experiment_name}", inv_G=inv_G)
+    xy = lfm.inducing_points.detach()[0]
+    prot_axes[0].scatter(xy[:, 0], xy[:, 1], facecolors='none', edgecolors='r', s=3)
+    # FIXME prot.pdf are actually mrna plots wirhout inducing points
+    plt.savefig(experiment_dir + "/" + experiment_name + "/prot.pdf", dpi=300, bbox_inches='tight')
+    mrna_axes[0].scatter(xy[:, 0], xy[:, 1], facecolors='none', edgecolors='r', s=3)
+    plt.savefig(experiment_dir + "/" + experiment_name + "/mrna.pdf", dpi=300, bbox_inches='tight')
     result_dict = {
         'prot_q2': prot_q2,
         'prot_cia': prot_cia,
@@ -413,14 +553,17 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     }
     with open(experiment_dir + "/" + experiment_name + "/result.json", "w") as f:
         json.dump(result_dict, f, indent=4)
+
 if __name__ == "__main__":
     # Example usage
     parser = argparse.ArgumentParser(description="Run Spatio-temporal Transcriptomics experiment.")
     parser.add_argument("--gene", type=str, required=True, help="Gene to analyze (e.g., 'kr', 'kni', 'gt').")
+    parser.add_argument("--trans", type=str, required=True, help="Transformation on the latent")
     parser.add_argument("--SEED", type=int, default=42, help="Random seed for reproducibility.")
     parser.add_argument("--drosophila", type=bool, default=True, help="Whether to use Drosophila dataset.")
     parser.add_argument("--use_lhs", type=bool, default=True, help="Use Latin Hypercube Sampling for inducing points.")
     parser.add_argument("--train_ratio", type=float, default=0.3, help="Ratio of data used for training.")
+    parser.add_argument("--lr", type=float, default=0.005, help="Learning rate")
     parser.add_argument("--skip", type=bool, default=False, help="Skip pre-estimator training.")
     parser.add_argument("--learn_inducing_locations", type=bool, default=False, help="Learn inducing point locations.")
     parser.add_argument("--gp_use_tril", type=bool, default=True, help="Use Cholesky decomposition in GP.")
@@ -445,5 +588,7 @@ if __name__ == "__main__":
         experiment_dir=args.experiment_dir,
         note=args.note,
         max_epoch=args.max_epoch,
-        debug=args.debug
+        debug=args.debug,
+        lr=args.lr,
+        transformation=args.trans
     )
