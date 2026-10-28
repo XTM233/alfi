@@ -1,0 +1,16 @@
+# Conda layer for the alfi spatio-temporal experiments.
+# Legacy FEniCS/dolfin 2019.1 is conda-forge only and is not pip-installable.
+name: local_alfi
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.9
+  - fenics=2019.1
+  - mpich
+  - mpi4py
+  - pkg-config          # required by dolfin's JIT (dijitso)
+  - clangxx             # macOS arm64; on Linux use gxx_linux-64
+  - pip
+  - pip:
+      - -r requirements.txt   # run `conda env create` from the repo root
