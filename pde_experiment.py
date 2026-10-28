@@ -62,7 +62,14 @@ def load_model(experiment_dir, existing_model, gp_kwargs, inducing_points, lengt
 
     return lfm, gp_model, num_epochs
 
-def evaluate_model(lfm, trainer, plot=False, scaler=None, path="", inv_G=None):
+def evaluate_model(lfm, trainer, plot=False, scaler=None, path="", inv_G=None, test_mask=None):
+    """Evaluate protein/mRNA metrics.
+
+    If ``test_mask`` is given (a boolean mask over the observed data, in the
+    dataset's original order), metrics are also computed on its complement and
+    returned as a final dict after the usual metrics/axes. When the complement
+    is empty (e.g. ``--train_ratio 1.0``) the held-out entries are ``None``.
+    """
     tx = trainer.tx
     disc = trainer.disc
     h = lfm(tx, step=disc)
@@ -124,6 +131,53 @@ def evaluate_model(lfm, trainer, plot=False, scaler=None, path="", inv_G=None):
         mrna_smse = smse(lf_target_unscaled.squeeze(), f_mean_unscaled.squeeze()).mean().item()
     mrna_cia = cia(lf_target_unscaled, f_mean_unscaled.squeeze(), f_var_unscaled.squeeze()).item()
 
+    test_metrics = None
+    if test_mask is not None:
+        h_pred = h_mean if scaler is not None else h_mean_unscaled
+        y_obs = y_target if scaler is not None else y_target_unscaled
+        f_pred = f_mean if scaler is not None else f_mean_unscaled
+        lf_obs = lf_target if scaler is not None else lf_target_unscaled
+
+        mask = torch.as_tensor(test_mask, dtype=torch.bool).detach().cpu()
+        t_sorted = getattr(trainer, "t_sorted", None)
+        if t_sorted is not None:
+            t_sorted = torch.as_tensor(t_sorted).detach().cpu()
+            if t_sorted.numel() == mask.numel():
+                # train_mask was built in dataset order; outputs follow t_sorted
+                mask = mask[t_sorted.long()]
+        hold = ~mask
+
+        def _flat(x):
+            return x.detach().reshape(-1).cpu()
+
+        h_pred, y_obs = _flat(h_pred), _flat(y_obs)
+        h_mean_u, h_var_u = _flat(h_mean_unscaled), _flat(h_var_unscaled)
+        y_obs_u = _flat(y_target_unscaled)
+        f_pred, lf_obs = _flat(f_pred), _flat(lf_obs)
+        f_mean_u, f_var_u = _flat(f_mean_unscaled), _flat(f_var_unscaled)
+        lf_obs_u = _flat(lf_target_unscaled)
+
+        with torch.no_grad():
+            if int(hold.sum().item()) == 0:
+                print("No held-out points: test_mask covers all observations.")
+                test_metrics = {
+                    "prot_q2_test": None,
+                    "prot_cia_test": None,
+                    "prot_smse_test": None,
+                    "mrna_q2_test": None,
+                    "mrna_cia_test": None,
+                    "mrna_smse_test": None,
+                }
+            else:
+                test_metrics = {
+                    "prot_q2_test": q2(y_obs[hold], h_pred[hold]).item(),
+                    "prot_cia_test": cia(y_obs_u[hold], h_mean_u[hold], h_var_u[hold]).item(),
+                    "prot_smse_test": smse(y_obs[hold], h_pred[hold]).mean().item(),
+                    "mrna_q2_test": q2(lf_obs[hold], f_pred[hold]).item(),
+                    "mrna_cia_test": cia(lf_obs_u[hold], f_mean_u[hold], f_var_u[hold]).item(),
+                    "mrna_smse_test": smse(lf_obs[hold], f_pred[hold]).mean().item(),
+                }
+
 
     if plot:
         if not scaler:
@@ -148,9 +202,12 @@ def evaluate_model(lfm, trainer, plot=False, scaler=None, path="", inv_G=None):
             clim=[(y_min, y_max),(y_min, y_max)],
         )
     if plot:
-        return prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse, prot_axes, mrna_axes
+        result = (prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse, prot_axes, mrna_axes)
     else:
-        return prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse
+        result = (prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse)
+    if test_mask is not None:
+        return result + (test_metrics,)
+    return result
 
 def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, learn_inducing_locations=False, gp_use_tril=True, params_grad=False, experiment_dir="experiment_results", note="", max_epoch=None, debug=False, transformation=None,lr=0.005, existing_model=None):
     # Set random seed for reproducibility
@@ -536,7 +593,10 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
     optimizer = [torch.optim.Adam(lfm.parameters(), lr=0.07)]
     trainer = PDETrainer(lfm, optimizer, dataset, track_parameters=list(lfm.fenics_named_parameters.keys()), lf_target=orig_data)
     lfm.eval()
-    prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse, prot_axes, mrna_axes = evaluate_model(lfm, trainer, plot=True, scaler=dataset.scaler, path=f"{experiment_dir}/{experiment_name}", inv_G=inv_G)
+    prot_q2, prot_cia, prot_smse, mrna_q2, mrna_cia, mrna_smse, prot_axes, mrna_axes, test_metrics = evaluate_model(
+        lfm, trainer, plot=True, scaler=dataset.scaler,
+        path=f"{experiment_dir}/{experiment_name}", inv_G=inv_G,
+        test_mask=train_mask)
     xy = lfm.inducing_points.detach()[0]
     prot_axes[0].scatter(xy[:, 0], xy[:, 1], facecolors='none', edgecolors='r', s=3)
     # FIXME prot.pdf are actually mrna plots wirhout inducing points
@@ -549,10 +609,36 @@ def main(gene, SEED, drosophila=True, use_lhs=True, train_ratio=0.3, skip=True, 
         'prot_smse': prot_smse,
         'mrna_q2': mrna_q2,
         'mrna_cia': mrna_cia,
-        'mrna_smse': mrna_smse
+        'mrna_smse': mrna_smse,
+        'n_train': int(train_mask.sum().item()),
+        'n_test': int((~train_mask.bool()).sum().item())
     }
+    if test_metrics is None:
+        test_metrics = {
+            'prot_q2_test': None,
+            'prot_cia_test': None,
+            'prot_smse_test': None,
+            'mrna_q2_test': None,
+            'mrna_cia_test': None,
+            'mrna_smse_test': None
+        }
+    result_dict.update(test_metrics)
+    if result_dict['n_test'] > 0:
+        print("Held-out metrics:", test_metrics)
     with open(experiment_dir + "/" + experiment_name + "/result.json", "w") as f:
         json.dump(result_dict, f, indent=4)
+
+def _str_to_bool(value):
+    """Parse a CLI boolean so that `--flag False` actually means False."""
+    if isinstance(value, bool):
+        return value
+    value = str(value).strip().lower()
+    if value in {"true", "t", "yes", "y", "1"}:
+        return True
+    if value in {"false", "f", "no", "n", "0"}:
+        return False
+    raise argparse.ArgumentTypeError(f"expected a boolean value, got {value!r}")
+
 
 if __name__ == "__main__":
     # Example usage
@@ -560,18 +646,18 @@ if __name__ == "__main__":
     parser.add_argument("--gene", type=str, required=True, help="Gene to analyze (e.g., 'kr', 'kni', 'gt').")
     parser.add_argument("--trans", type=str, required=True, help="Transformation on the latent")
     parser.add_argument("--SEED", type=int, default=42, help="Random seed for reproducibility.")
-    parser.add_argument("--drosophila", type=bool, default=True, help="Whether to use Drosophila dataset.")
-    parser.add_argument("--use_lhs", type=bool, default=True, help="Use Latin Hypercube Sampling for inducing points.")
+    parser.add_argument("--drosophila", type=_str_to_bool, default=True, help="Whether to use Drosophila dataset.")
+    parser.add_argument("--use_lhs", type=_str_to_bool, default=True, help="Use Latin Hypercube Sampling for inducing points.")
     parser.add_argument("--train_ratio", type=float, default=0.3, help="Ratio of data used for training.")
     parser.add_argument("--lr", type=float, default=0.005, help="Learning rate")
-    parser.add_argument("--skip", type=bool, default=False, help="Skip pre-estimator training.")
-    parser.add_argument("--learn_inducing_locations", type=bool, default=False, help="Learn inducing point locations.")
-    parser.add_argument("--gp_use_tril", type=bool, default=True, help="Use Cholesky decomposition in GP.")
-    parser.add_argument("--params_grad", type=bool, default=False, help="Enable gradient for PDE parameters.")
+    parser.add_argument("--skip", type=_str_to_bool, default=False, help="Skip pre-estimator training.")
+    parser.add_argument("--learn_inducing_locations", type=_str_to_bool, default=False, help="Learn inducing point locations.")
+    parser.add_argument("--gp_use_tril", type=_str_to_bool, default=True, help="Use Cholesky decomposition in GP.")
+    parser.add_argument("--params_grad", type=_str_to_bool, default=False, help="Enable gradient for PDE parameters.")
     parser.add_argument("--experiment_dir", type=str, default="experiment_results", help="Directory to save experiment results.")
     parser.add_argument("--note", type=str, default="", help="Additional note for experiment naming.")
     parser.add_argument("--max_epoch", type=int, default=0, help="Maximum number of training epochs.")
-    parser.add_argument("--debug", type=bool, default=False, help="Enable debug mode for smaller learning rates.")
+    parser.add_argument("--debug", type=_str_to_bool, default=False, help="Enable debug mode for smaller learning rates.")
 
     args = parser.parse_args()
 
