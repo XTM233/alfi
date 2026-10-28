@@ -1,3 +1,32 @@
-sphinx>=4.0.0,<4.1.0
-nbsphinx
-sphinx-rtd-theme
+# Runtime dependencies for the alfi experiments.
+# Verified against the `local_alfi` env (Python 3.9.23, macOS arm64, CPU).
+#
+# 1. Create the conda layer first (legacy FEniCS 2019.1 is not on PyPI):
+#      conda env create -f environment.yml
+#      conda activate local_alfi
+# 2. This file is installed by environment.yml; to install manually:
+#      pip install -r requirements.txt
+#      pip install -e .
+#
+# Docs dependencies: requirements-docs.txt
+
+torch==2.7.1
+gpytorch==1.13
+numpy==1.26.4
+scipy==1.13.1
+pandas==2.3.1
+matplotlib==3.9.4
+seaborn==0.13.2
+scikit-learn==1.6.1
+smt==2.9.3                 # Latin hypercube sampling (--use_lhs)
+torchdiffeq==0.2.5
+torchcubicspline==0.0.3
+tqdm==4.67.1
+networkx==3.2.1
+pytorch-lightning==2.5.2   # optional: only alfi/models/mlp.py
+
+# FEniCS autodiff layer. torch-fenics requires the `torch-fenics` branch of
+# barkm's pyadjoint fork; these two lines are NOT interchangeable with the
+# PyPI releases.
+dolfin-adjoint @ git+https://bitbucket.org/barkm/pyadjoint.git@torch-fenics
+torch-fenics @ git+https://github.com/barkm/torch-fenics.git
